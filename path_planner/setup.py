@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             'planner = path_planner.planner:main',
             'follow_path_client = path_planner.follow_path_client:main',
+            'map_visualizer = path_planner.map_visualizer:main'
         ],
     },
 )
