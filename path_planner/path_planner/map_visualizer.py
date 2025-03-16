@@ -156,6 +156,41 @@ class OccupancyGridVisualizer(Node):
                         )
                     )
 
+        start = (2,2)
+        goal = (4, 4)  # Example goal
+        path = self.a_star(self.decomposed_grid, start, goal)
+
+        # Draw cell start and goal with an organge color
+        start_x = start[0] * cell_size * resolution
+        start_y = (self.decomposed_grid.shape[0] - start[1]) * cell_size * resolution
+        # plt.plot(start[0], start[1], 'go', label="Start Position")
+        goal_x = goal[0] * cell_size * resolution
+        goal_y = (self.decomposed_grid.shape[0] - goal[1]) * cell_size * resolution
+        plt.plot(goal[0], goal[1], 'ro', label="Goal Position")
+
+        # finde closest cell to start point
+        start = (int(start[0] / (cell_size * resolution)), int(start[1] / (cell_size * resolution)))  # Example start
+        plt.gca().add_patch(
+            plt.Rectangle(
+                (start[0], start[1]),
+                cell_size * resolution,
+                -cell_size * resolution,
+                fill="red",  # Only draw the border
+                edgecolor="green",
+                linewidth=1
+            )
+        )
+        goal = (int(goal[0] / (cell_size * resolution)), int(goal[1] / (cell_size * resolution)))  # Example start
+        plt.gca().add_patch(
+            plt.Rectangle(
+                (goal[0], goal[1]),
+                cell_size * resolution,
+                -cell_size * resolution,
+                fill="blue",  # Only draw the border
+                edgecolor="green",
+                linewidth=1
+            )
+        )
 
         # Plot robot position if available
         if self.robot_pose:
@@ -178,13 +213,19 @@ class OccupancyGridVisualizer(Node):
             # start = (int((self.robot_pose[0]-origin.x) / (cell_size * resolution)), int((self.robot_pose[1] - origin.y) / (cell_size * resolution)))  # Example start
             # start = (int((3-origin.x) / (cell_size * resolution)), int((3 - origin.y) / (cell_size * resolution)))  # Example start
             # end = (int((-5-origin.x) / (cell_size * resolution)), int((-5 - origin.y) / (cell_size * resolution)))  # Example start
-            start = (0,0)
-            goal = (0, 2)  # Example goal
+            start = (2,2)
+            goal = (4, 4)  # Example goal
             path = self.a_star(self.decomposed_grid, start, goal)
 
-            path_x = [origin.x + start[0] * cell_size * resolution for p in path]
-            path_y = [-origin.y - (self.decomposed_grid.shape[0] - start[1]) * cell_size * resolution for p in path]
-            plt.plot(path_x, path_y, 'b-', label="Planned Path")
+            # Draw cell start and goal with an organge color
+            # start_x = origin.x + start[0] * cell_size * resolution
+            # start_y = -origin.y - (self.decomposed_grid.shape[0] - start[1]) * cell_size * resolution
+            # plt.plot(start_x, start_y, 'go', label="Start Position")
+            # goal_x = origin.x + goal[0] * cell_size * resolution
+            # goal_y = -origin.y - (self.decomposed_grid.shape[0] - goal[1]) * cell_size * resolution
+            # plt.plot(goal_x, goal_y, 'ro', label="Goal Position")
+
+
 
             if path:
                 print("Path found:", path)
