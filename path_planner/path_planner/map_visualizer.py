@@ -209,7 +209,9 @@ class OccupancyGridVisualizer(Node):
     
     def update_goal_pose(self, msg):
         print("Received Goal Pose")
-        self.goal_pose = (msg.poses[0].position.x, msg.poses[0].position.y)
+        rot = msg.poses[0].orientation
+        theta = atan2(2 * (rot.w * rot.z + rot.x * rot.y), 1 - 2 * (rot.y**2 + rot.z**2))
+        self.goal_pose = (msg.poses[0].position.x, msg.poses[0].position.y, theta)
         self.plot()
 
     def update_robot_pose_1(self, msg):
@@ -264,12 +266,10 @@ class OccupancyGridVisualizer(Node):
                 (current[0], current[1] - 1)
             ]
 
-            print(neighbors)
-
             for neighbor in neighbors:
                 # if 0 <= neighbor[0] < decomposed_grid.shape[0] and 0 <= neighbor[1] < decomposed_grid.shape[1]:
                 # print(f"{decomposed_grid[neighbor[0], neighbor[1]]=}, {neighbor[0]}, {neighbor[1]}")
-                if decomposed_grid[neighbor[1] + 23, neighbor[0] + 25] == 0:
+                if decomposed_grid[neighbor[1] + 23, neighbor[0] + 25] == 0 and neighbor[0] != goal[0] and neighbor[1] != goal[1]:
                     continue
 
                 tentative_g_score = g_score[current] + 1
@@ -417,7 +417,6 @@ class OccupancyGridVisualizer(Node):
 
         path = self.a_star(self.decomposed_grid, start_index, goal_index)
         if path:
-            print(path)
             self.plot_path(path, self.cell_size, self.resolution)
 
         return path
@@ -438,18 +437,19 @@ class OccupancyGridVisualizer(Node):
 
             checkpoints.append((mid[0], mid[1], angle))
         checkpoints.append(goal)
+        
 
         # plot a dubins curve
         # x0, y0, theta0 = 0, 0, -pi/2
         # xf, yf, thetaf = 4, 0, -pi/2
         for i in range(len(checkpoints) - 1):
-            x0, y0, theta0 = checkpoints[i]
-            xf, yf, thetaf = checkpoints[i + 1]
+            # x0, y0, theta0 = checkpoints[i]
+            # xf, yf, thetaf = checkpoints[i + 1]
             min_radius = self.cell_size * self.resolution / 2 / 1.1
         
             kappa_max = 1.0 / min_radius
-            result, phi, lambd = compute_dubins_path(x0, y0, theta0, xf, yf, thetaf, kappa_max)
-            print(self.plot_dubin(x0, y0, min_radius, theta0, result[0], result[1]))
+            result, phi, lambd = compute_dubins_path(checkpoints[i], checkpoints[i + 1], kappa_max)
+            # print(self.plot_dubin(x0, y0, min_radius, theta0, result[0], result[1]))
 
     def plot(self):
         if self.grid_data is None or self.grid_info is None:
@@ -488,50 +488,6 @@ class OccupancyGridVisualizer(Node):
         
         # Display the decomposed grid
         self.plot_grid(origin, self.cell_size, self.resolution)
-
-        # if p:=self.robot_pose:
-        #     start = p
-        # else:
-        #     return
-        
-        # start = (6.1, -4.3, 0.0)
-        # goal = (-3, -6, 0)  # Example goal
-
-        # # find the closest cell to start point
-        # start_index = self.pos2grid(start, resolution, self.cell_size)
-        # goal_index = self.pos2grid(goal, resolution, self.cell_size)
-
-        # path = self.a_star(self.decomposed_grid, start_index, goal_index)
-        # print(start, goal, path)
-        # self.plot_path(path, self.cell_size, resolution)
-        
-        # print("checkpoints")
-        # checkpoints = []
-        # checkpoints.append(start)
-        
-        # for i in range(len(path) - 2):
-        #     current = np.array(self.grid2pos(path[i], resolution, self.cell_size))
-        #     next = np.array(self.grid2pos(path[i + 1], resolution, self.cell_size))
-        #     # print(current, next, self.grid2pos(current, resolution, cell_size), self.grid2pos(next, resolution, cell_size))
-
-        #     diff = next - current
-        #     angle = atan2(diff[1], diff[0])
-        #     mid = (current + next) / 2
-
-        #     checkpoints.append((mid[0], mid[1], angle))
-        # checkpoints.append(goal)
-
-        
-        # for checkpoint in checkpoints:
-        #     print(checkpoint)
-        #     plt.plot(
-        #         checkpoint[0],
-        #         checkpoint[1],
-        #         'bo',  # Red dot for the robot position
-        #         label="Robot Position"
-        #     )
-
-        # print("end checkpoints")
         
         print(self.robot_pose)
         print(self.robot_pose_1)
@@ -559,6 +515,11 @@ class OccupancyGridVisualizer(Node):
                 'bo',  # Red dot for the robot position
                 label="Robot Position"
             )
+            
+            print("Computing Robot Path")
+            robot2_path = self.shortest_path_robot(self.robot_pose_1, self.goal_pose)
+            if robot2_path:
+                self.path_to_dubins(robot2_path, self.robot_pose, self.goal_pose)
             # robot2_path = self.shortest_path_robot(self.robot_pose_1, self.goal_pose)
             # self.path_to_dubins(robot2_path, self.robot_pose_1, self.goal_pose)
 
