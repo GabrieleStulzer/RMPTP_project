@@ -109,12 +109,12 @@ def dubins_LRL(theta0, thetaf, kappa):
 def all_dubins_paths(theta0, thetaf, kappa, lambd):
     paths = {}
     for name, fn in [
-        # ('LSL', dubins_LSL),
-        # ('RSR', dubins_RSR),
-        # ('LSR', dubins_LSR),
+        ('LSL', dubins_LSL),
+        ('RSR', dubins_RSR),
+        ('LSR', dubins_LSR),
         ('RSL', dubins_RSL),
-        # ('RLR', dubins_RLR),
-        # ('LRL', dubins_LRL),
+        ('RLR', dubins_RLR),
+        ('LRL', dubins_LRL),
     ]:
         try:
             s1, s2, s3, L = fn(theta0, thetaf, kappa)
@@ -242,7 +242,9 @@ class OccupancyGridVisualizer(Node):
     
     
     def grid2pos(self, indexes, resolution, cell_size):
-        ...
+        x = (indexes[0] + 0.5) * resolution * cell_size
+        y = (indexes[1] + 0.5) * resolution * cell_size
+        return x, y
         
     
     def pos2grid(self, position, resolution, cell_size):
@@ -405,8 +407,8 @@ class OccupancyGridVisualizer(Node):
         else:
             return
         
-        start = (6.1, -4.3)
-        goal = (-3, -6)  # Example goal
+        start = (6.1, -4.3, 0.0)
+        goal = (-3, -6, 0)  # Example goal
 
         # find the closest cell to start point
         start_index = self.pos2grid(start, resolution, cell_size)
@@ -416,24 +418,46 @@ class OccupancyGridVisualizer(Node):
         print(start, goal, path)
         self.plot_path(path, cell_size, resolution)
         
+        print("checkpoints")
         checkpoints = []
         checkpoints.append(start)
         
-        for cell in path:
-            pass
+        for i in range(len(path) - 2):
+            current = np.array(self.grid2pos(path[i], resolution, cell_size))
+            next = np.array(self.grid2pos(path[i + 1], resolution, cell_size))
+            # print(current, next, self.grid2pos(current, resolution, cell_size), self.grid2pos(next, resolution, cell_size))
+
+            diff = next - current
+            angle = atan2(diff[1], diff[0])
+            mid = (current + next) / 2
+
+            checkpoints.append((mid[0], mid[1], angle))
+        checkpoints.append(goal)
+
         
-        print("checkpoints")
-        print(checkpoints)
+        for checkpoint in checkpoints:
+            print(checkpoint)
+            plt.plot(
+                checkpoint[0],
+                checkpoint[1],
+                'bo',  # Red dot for the robot position
+                label="Robot Position"
+            )
+
+        print("end checkpoints")
         
         
         # plot a dubins curve
-        x0, y0, theta0 = 0, 0, -pi/2
-        xf, yf, thetaf = 4, 0, -pi/2
-        min_radius = 1.0
+        # x0, y0, theta0 = 0, 0, -pi/2
+        # xf, yf, thetaf = 4, 0, -pi/2
+        for i in range(len(checkpoints) - 1):
+            x0, y0, theta0 = checkpoints[i]
+            xf, yf, thetaf = checkpoints[i + 1]
+            min_radius = cell_size * resolution / 2 / 1.1
         
-        kappa_max = 1.0 / min_radius
-        result, phi, lambd = compute_dubins_path(x0, y0, theta0, xf, yf, thetaf, kappa_max)
-        print(self.plot_dubin(x0, y0, min_radius, theta0, result[0], result[1]))
+            kappa_max = 1.0 / min_radius
+            result, phi, lambd = compute_dubins_path(x0, y0, theta0, xf, yf, thetaf, kappa_max)
+            print(self.plot_dubin(x0, y0, min_radius, theta0, result[0], result[1]))
         
         
         
