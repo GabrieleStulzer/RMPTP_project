@@ -5,7 +5,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 
 from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped, PoseArray
 
 import heapq
 
@@ -126,8 +126,10 @@ def all_dubins_paths(theta0, thetaf, kappa, lambd):
 
 
 # Main function: from initial to final
-def compute_dubins_path(x0, y0, theta0, xf, yf, thetaf, kappa_max):
+def compute_dubins_path(checkpoint, checkpoint1, kappa_max):
     # Apply bipolar transform
+    (x0, y0, theta0) = checkpoint
+    (xf, yf, thetaf) = checkpoint1
     (p0, _), phi, lambd = bipolar_transform(x0, y0, x0, y0, xf, yf)
     (pf, _), _, _ = bipolar_transform(xf, yf, x0, y0, xf, yf)
 
@@ -140,6 +142,7 @@ def compute_dubins_path(x0, y0, theta0, xf, yf, thetaf, kappa_max):
     paths = all_dubins_paths(mod2pi(theta0_std), mod2pi(thetaf_std), kappa_std, lambd)
     optimal = min(paths.items(), key=lambda x: x[1][3])
     return optimal, phi, lambd
+
 
 class OccupancyGridVisualizer(Node):
     def __init__(self):
@@ -164,21 +167,56 @@ class OccupancyGridVisualizer(Node):
             self.update_robot_pose,
             qos_profile
         )
+
+        self.pose_subscription = self.create_subscription(
+            PoseWithCovarianceStamped,
+            '/shelfino1/amcl_pose',
+            self.update_robot_pose_1,
+            qos_profile
+        )
+
+        self.goal_sub = self.create_subscription(
+            PoseArray,
+            '/gates',
+            self.update_goal_pose,
+            qos_profile
+        )
+
+        self.resolution = 0
+        self.cell_size = 0
+
         self.grid_data = None
         self.grid_info = None
+        self.goal_pose = None
         self.robot_pose = None
+        self.robot_pose_1 = None
         self.decomposed_grid = None
 
     def update_occupancy_grid(self, msg):
         self.grid_data = np.array(msg.data, dtype=np.int8).reshape((msg.info.height, msg.info.width))
         # self.grid_data = np.flipud(self.grid_data)
         self.grid_info = msg.info
+        self.resolution = self.grid_info.resolution
         self.plot()
-
+    
     def update_robot_pose(self, msg):
+        print("Received robot Pose")
+        print(msg)
         rot = msg.pose.pose.orientation
         theta = atan2(2 * (rot.w * rot.z + rot.x * rot.y), 1 - 2 * (rot.y**2 + rot.z**2))
         self.robot_pose = (msg.pose.pose.position.x, msg.pose.pose.position.y, theta)
+        self.plot()
+    
+    def update_goal_pose(self, msg):
+        print("Received Goal Pose")
+        self.goal_pose = (msg.poses[0].position.x, msg.poses[0].position.y)
+        self.plot()
+
+    def update_robot_pose_1(self, msg):
+        print("Received robot1 Pose")
+        rot = msg.pose.pose.orientation
+        theta = atan2(2 * (rot.w * rot.z + rot.x * rot.y), 1 - 2 * (rot.y**2 + rot.z**2))
+        self.robot_pose_1 = (msg.pose.pose.position.x, msg.pose.pose.position.y, theta)
         self.plot()
 
     def apply_fixed_cell_decomposition(self, grid, cell_size):
@@ -199,7 +237,8 @@ class OccupancyGridVisualizer(Node):
     def a_star(self, decomposed_grid, start, goal):
         """A* algorithm to find the shortest path on the decomposed grid."""
         def heuristic(a, b):
-            return abs(a[0] - b[0]) + abs(a[1] - b[1])
+            # return abs(a[0] - b[0]) + abs(a[1] - b[1])
+            return np.hypot((a[0] - b[0]), (a[1] - b[1]))
 
         open_set = []
         heapq.heappush(open_set, (0, start))
@@ -224,6 +263,8 @@ class OccupancyGridVisualizer(Node):
                 (current[0], current[1] + 1),
                 (current[0], current[1] - 1)
             ]
+
+            print(neighbors)
 
             for neighbor in neighbors:
                 # if 0 <= neighbor[0] < decomposed_grid.shape[0] and 0 <= neighbor[1] < decomposed_grid.shape[1]:
@@ -366,9 +407,55 @@ class OccupancyGridVisualizer(Node):
             elif letter == "S":
                 x, y = self.plotSdubin(x, y, theta, lengths[i])
         return x, y, theta
+    
+    def shortest_path_robot(self, robot_pose, goal_pose):
+        # find the closest cell to start point
+        start_index = self.pos2grid(robot_pose, self.resolution, self.cell_size)
+        goal_index = self.pos2grid(goal_pose, self.resolution, self.cell_size)
+        print(start_index)
+        print(goal_index)
+
+        path = self.a_star(self.decomposed_grid, start_index, goal_index)
+        if path:
+            print(path)
+            self.plot_path(path, self.cell_size, self.resolution)
+
+        return path
+        
+
+    def path_to_dubins(self, path, start, goal):
+        checkpoints = []
+        checkpoints.append(start)
+        
+        for i in range(len(path) - 2):
+            current = np.array(self.grid2pos(path[i], self.resolution, self.cell_size))
+            next = np.array(self.grid2pos(path[i + 1], self.resolution, self.cell_size))
+            # print(current, next, self.grid2pos(current, resolution, cell_size), self.grid2pos(next, resolution, cell_size))
+
+            diff = next - current
+            angle = atan2(diff[1], diff[0])
+            mid = (current + next) / 2
+
+            checkpoints.append((mid[0], mid[1], angle))
+        checkpoints.append(goal)
+
+        # plot a dubins curve
+        # x0, y0, theta0 = 0, 0, -pi/2
+        # xf, yf, thetaf = 4, 0, -pi/2
+        for i in range(len(checkpoints) - 1):
+            x0, y0, theta0 = checkpoints[i]
+            xf, yf, thetaf = checkpoints[i + 1]
+            min_radius = self.cell_size * self.resolution / 2 / 1.1
+        
+            kappa_max = 1.0 / min_radius
+            result, phi, lambd = compute_dubins_path(x0, y0, theta0, xf, yf, thetaf, kappa_max)
+            print(self.plot_dubin(x0, y0, min_radius, theta0, result[0], result[1]))
 
     def plot(self):
         if self.grid_data is None or self.grid_info is None:
+            return
+        if self.robot_pose is None and self.robot_pose_1 is None and self.goal_pose is None:
+            print("Missing infos to proceed")
             return
 
         # Extract metadata
@@ -381,9 +468,9 @@ class OccupancyGridVisualizer(Node):
         binary_grid = np.where(self.grid_data > 0, 0, 1)
 
         # Apply fixed cell decomposition
-        cell_size = 100  # Example cell size
+        self.cell_size = 100  # Example cell size
         if self.decomposed_grid is None:
-            self.decomposed_grid = self.apply_fixed_cell_decomposition(binary_grid, cell_size)
+            self.decomposed_grid = self.apply_fixed_cell_decomposition(binary_grid, self.cell_size)
 
 
         plt.figure(figsize=(10, 10))
@@ -400,93 +487,102 @@ class OccupancyGridVisualizer(Node):
         )
         
         # Display the decomposed grid
-        self.plot_grid(origin, cell_size, resolution)
+        self.plot_grid(origin, self.cell_size, self.resolution)
 
-        if p:=self.robot_pose:
-            start = p
-        else:
-            return
+        # if p:=self.robot_pose:
+        #     start = p
+        # else:
+        #     return
         
-        start = (6.1, -4.3, 0.0)
-        goal = (-3, -6, 0)  # Example goal
+        # start = (6.1, -4.3, 0.0)
+        # goal = (-3, -6, 0)  # Example goal
 
-        # find the closest cell to start point
-        start_index = self.pos2grid(start, resolution, cell_size)
-        goal_index = self.pos2grid(goal, resolution, cell_size)
+        # # find the closest cell to start point
+        # start_index = self.pos2grid(start, resolution, self.cell_size)
+        # goal_index = self.pos2grid(goal, resolution, self.cell_size)
 
-        path = self.a_star(self.decomposed_grid, start_index, goal_index)
-        print(start, goal, path)
-        self.plot_path(path, cell_size, resolution)
+        # path = self.a_star(self.decomposed_grid, start_index, goal_index)
+        # print(start, goal, path)
+        # self.plot_path(path, self.cell_size, resolution)
         
-        print("checkpoints")
-        checkpoints = []
-        checkpoints.append(start)
+        # print("checkpoints")
+        # checkpoints = []
+        # checkpoints.append(start)
         
-        for i in range(len(path) - 2):
-            current = np.array(self.grid2pos(path[i], resolution, cell_size))
-            next = np.array(self.grid2pos(path[i + 1], resolution, cell_size))
-            # print(current, next, self.grid2pos(current, resolution, cell_size), self.grid2pos(next, resolution, cell_size))
+        # for i in range(len(path) - 2):
+        #     current = np.array(self.grid2pos(path[i], resolution, self.cell_size))
+        #     next = np.array(self.grid2pos(path[i + 1], resolution, self.cell_size))
+        #     # print(current, next, self.grid2pos(current, resolution, cell_size), self.grid2pos(next, resolution, cell_size))
 
-            diff = next - current
-            angle = atan2(diff[1], diff[0])
-            mid = (current + next) / 2
+        #     diff = next - current
+        #     angle = atan2(diff[1], diff[0])
+        #     mid = (current + next) / 2
 
-            checkpoints.append((mid[0], mid[1], angle))
-        checkpoints.append(goal)
+        #     checkpoints.append((mid[0], mid[1], angle))
+        # checkpoints.append(goal)
 
         
-        for checkpoint in checkpoints:
-            print(checkpoint)
-            plt.plot(
-                checkpoint[0],
-                checkpoint[1],
-                'bo',  # Red dot for the robot position
-                label="Robot Position"
-            )
+        # for checkpoint in checkpoints:
+        #     print(checkpoint)
+        #     plt.plot(
+        #         checkpoint[0],
+        #         checkpoint[1],
+        #         'bo',  # Red dot for the robot position
+        #         label="Robot Position"
+        #     )
 
-        print("end checkpoints")
+        # print("end checkpoints")
         
+        print(self.robot_pose)
+        print(self.robot_pose_1)
+        print(self.robot_pose_1)
         
-        # plot a dubins curve
-        # x0, y0, theta0 = 0, 0, -pi/2
-        # xf, yf, thetaf = 4, 0, -pi/2
-        for i in range(len(checkpoints) - 1):
-            x0, y0, theta0 = checkpoints[i]
-            xf, yf, thetaf = checkpoints[i + 1]
-            min_radius = cell_size * resolution / 2 / 1.1
-        
-            kappa_max = 1.0 / min_radius
-            result, phi, lambd = compute_dubins_path(x0, y0, theta0, xf, yf, thetaf, kappa_max)
-            print(self.plot_dubin(x0, y0, min_radius, theta0, result[0], result[1]))
-        
-        
-        
-
         # Plot robot position if available
-        if self.robot_pose:
+        if self.robot_pose and self.robot_pose_1 and self.goal_pose:
+            print("Plotting Robot Pose")
             plt.plot(
                 self.robot_pose[0],
                 self.robot_pose[1],
                 'ro',  # Red dot for the robot position
                 label="Robot Position"
             )
+
+            print("Computing Robot Path")
+            robot1_path = self.shortest_path_robot(self.robot_pose, self.goal_pose)
+            print(robot1_path)
+            if robot1_path:
+                self.path_to_dubins(robot1_path, self.robot_pose, self.goal_pose)
+
             plt.plot(
-                goal[0],
-                goal[1],
+                self.robot_pose_1[0],
+                self.robot_pose_1[1],
+                'bo',  # Red dot for the robot position
+                label="Robot Position"
+            )
+            # robot2_path = self.shortest_path_robot(self.robot_pose_1, self.goal_pose)
+            # self.path_to_dubins(robot2_path, self.robot_pose_1, self.goal_pose)
+
+            plt.plot(
+                self.goal_pose[0],
+                self.goal_pose[1],
                 'go',  # Green dot for the goal position
                 label="Goal Position"
             )
             plt.legend()
 
 
-        plt.title("Decomposed Grid with Robot Position")
-        plt.xlabel("Y (meters)")
-        plt.ylabel("X (meters)")
-        plt.xlim([origin.x, origin.x + width * resolution])
-        plt.ylim([origin.y, origin.y + height * resolution])
-        plt.gca().set_aspect('equal', adjustable='box')
-        plt.show()
-        exit()
+            plt.title("Decomposed Grid with Robot Position")
+            plt.xlabel("Y (meters)")
+            plt.ylabel("X (meters)")
+            plt.xlim([origin.x, origin.x + width * resolution])
+            plt.ylim([origin.y, origin.y + height * resolution])
+            plt.gca().set_aspect('equal', adjustable='box')
+            plt.show()
+            exit()
+        
+        else:
+            print("Missing info to proceed")
+            return
 
 
 def main(args=None):
